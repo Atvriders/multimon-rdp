@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import Guacamole from 'guacamole-common-js';
 import { RDPTunnel, BroadcastTunnel } from '../lib/tunnel';
-import { getChannel, sendMouse, sendKey, endSession } from '../lib/channel';
+import { getChannel, sendMouse, sendKey } from '../lib/channel';
 import type { SessionInfo, ChannelMsg } from '../types';
 
 interface Props {
@@ -86,7 +86,7 @@ export default function MonitorView({ session, monitorIndex, isPrimary, onDiscon
     el.addEventListener('mousemove',   onMouse);
     el.addEventListener('mousedown',   onMouse);
     el.addEventListener('mouseup',     onMouse);
-    el.addEventListener('contextmenu', ev => ev.preventDefault());
+    el.addEventListener('contextmenu', (ev: Event) => ev.preventDefault());
     el.addEventListener('wheel',       onWheel, { passive: false });
 
     // ── Keyboard ─────────────────────────────────────────────────────────────
