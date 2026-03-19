@@ -3,9 +3,9 @@ services:
     image: ghcr.io/atvriders/multimon-rdp/server:latest
     restart: unless-stopped
     environment:
-      PORT: "3000"
+      PORT: "3001"
     ports:
-      - "3000:3000"
+      - "3001:3001"
 
   frontend:
     image: ghcr.io/atvriders/multimon-rdp/frontend:latest

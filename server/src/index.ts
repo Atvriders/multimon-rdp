@@ -3,7 +3,7 @@ import { WebSocketServer } from 'ws';
 import { SessionRegistry } from './rdp/session';
 import type { RdpConfig } from './rdp/client';
 
-const PORT = parseInt(process.env.PORT ?? '3000', 10);
+const PORT = parseInt(process.env.PORT ?? '3001', 10);
 
 const registry = new SessionRegistry();
 
