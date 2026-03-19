@@ -5,7 +5,7 @@ import { getChannel, announceSession, requestMonitor, assignMonitor, endSession 
 import type { ConnectParams, SessionInfo, ChannelMsg } from './types';
 import './App.css';
 
-const SERVER = import.meta.env.VITE_SERVER_URL || '';
+const SERVER   = import.meta.env.VITE_SERVER_URL || '';
 const WINDOW_ID = Math.random().toString(36).slice(2);
 
 export default function App() {
@@ -15,10 +15,10 @@ export default function App() {
   const [showForm,     setShowForm]     = useState(false);
   const [error,        setError]        = useState('');
 
-  // Track assigned secondary windows so primary can assign correct index
-  const nextMonitorRef  = useRef(1);  // 0 = primary, starts assigning from 1
-  const sessionRef      = useRef<SessionInfo | null>(null);
-  sessionRef.current    = session;
+  const nextMonitorRef = useRef(1);
+  const sessionRef     = useRef<SessionInfo | null>(null);
+  sessionRef.current   = session;
+  const isPrimaryRef   = useRef(false);
 
   useEffect(() => {
     const ch = getChannel();
@@ -26,30 +26,24 @@ export default function App() {
     const handler = (e: MessageEvent<ChannelMsg>) => {
       const msg = e.data;
 
-      // Another window already has a session → join as secondary
       if (msg.type === 'session-announce') {
-        if (sessionRef.current) return; // already connected
+        if (sessionRef.current) return;
         setSession(msg.session);
         setIsPrimary(false);
         requestMonitor(WINDOW_ID);
       }
 
-      // Primary assigns us a monitor index
       if (msg.type === 'monitor-assign' && msg.windowId === WINDOW_ID) {
         setMonitorIndex(msg.monitorIndex);
       }
 
-      // A secondary window is asking for a monitor slot
       if (msg.type === 'monitor-request') {
         if (!isPrimaryRef.current || !sessionRef.current) return;
         const idx = nextMonitorRef.current;
-        if (idx < sessionRef.current.monitors) {
-          nextMonitorRef.current = idx + 1;
-          assignMonitor(msg.windowId, idx);
-        }
+        nextMonitorRef.current = idx + 1;
+        assignMonitor(msg.windowId, idx);
       }
 
-      // Session ended
       if (msg.type === 'session-end') {
         setSession(null);
         setMonitorIndex(null);
@@ -59,13 +53,10 @@ export default function App() {
 
     ch.addEventListener('message', handler);
 
-    // On load: check if a session already exists by requesting from channel
-    // Give it 300 ms — if no session-announce arrives we're the first window
     const timeout = setTimeout(() => {
       if (!sessionRef.current) setShowForm(true);
     }, 300);
 
-    // Re-announce if this is primary (handles secondary window refresh)
     const reannounce = setInterval(() => {
       if (isPrimaryRef.current && sessionRef.current) {
         announceSession(sessionRef.current);
@@ -79,9 +70,6 @@ export default function App() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Keep a ref so the closure above can read current isPrimary
-  const isPrimaryRef = useRef(false);
 
   const handleConnect = async (params: ConnectParams) => {
     setError('');
@@ -101,7 +89,6 @@ export default function App() {
       nextMonitorRef.current = 1;
       setShowForm(false);
 
-      // Tell other open windows about this session
       announceSession(info);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed');
@@ -114,11 +101,11 @@ export default function App() {
     setMonitorIndex(null);
     setShowForm(true);
     isPrimaryRef.current = false;
+    nextMonitorRef.current = 1;
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────
 
-  // Active monitor view
   if (session && monitorIndex !== null) {
     return (
       <div className="monitor-root">
@@ -130,10 +117,8 @@ export default function App() {
         />
         {isPrimary && (
           <div className="monitor-hud">
-            <span className="hud-label">Monitor {monitorIndex + 1} / {session.monitors}</span>
-            {session.monitors > 1 && (
-              <span className="hud-hint">Open a new browser window for each additional monitor</span>
-            )}
+            <span className="hud-label">Monitor {monitorIndex + 1}</span>
+            <span className="hud-hint">Open a new browser window for each additional monitor</span>
             <button className="hud-disconnect" onClick={handleDisconnect}>Disconnect</button>
           </div>
         )}
@@ -146,7 +131,6 @@ export default function App() {
     );
   }
 
-  // Waiting for monitor assignment (secondary window not yet assigned)
   if (session && monitorIndex === null) {
     return (
       <div className="waiting">
@@ -156,7 +140,6 @@ export default function App() {
     );
   }
 
-  // Connect form (primary window before connection)
   if (showForm) {
     return (
       <div className="form-root">
@@ -166,7 +149,6 @@ export default function App() {
     );
   }
 
-  // Brief loading state while checking for existing sessions
   return (
     <div className="waiting">
       <div className="waiting-spinner" />

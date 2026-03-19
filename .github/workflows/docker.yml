@@ -19,8 +19,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: guacd
-            context: ./guacd
           - name: server
             context: ./server
           - name: frontend

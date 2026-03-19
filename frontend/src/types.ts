@@ -1,36 +1,26 @@
-export type Protocol = 'rdp' | 'vnc';
+export type Protocol = 'rdp';
 
 export interface ConnectParams {
-  protocol:  Protocol;
-  host:      string;
-  port:      number;
-  username:  string;
-  password:  string;
-  domain:    string;
-  monitors:  number;   // 1 – 3
+  host:          string;
+  port:          number;
+  username:      string;
+  password:      string;
+  domain:        string;
   monitorWidth:  number;
   monitorHeight: number;
-  colorDepth: number;
-  // RDP
-  security:   string;
-  ignoreCert: boolean;
-  // VNC
-  viewOnly: boolean;
+  ignoreCert:    boolean;
 }
 
 export interface SessionInfo {
-  token:         string;
+  sessionId:     string;
   monitors:      number;
   monitorWidth:  number;
   monitorHeight: number;
 }
 
-// BroadcastChannel messages
 export type ChannelMsg =
   | { type: 'session-announce'; session: SessionInfo }
   | { type: 'monitor-request'; windowId: string }
   | { type: 'monitor-assign';  windowId: string; monitorIndex: number }
-  | { type: 'guac-data';  data: string }
-  | { type: 'mouse'; x: number; y: number; buttons: number; up: boolean; down: boolean }
-  | { type: 'key';   keysym: number; pressed: boolean }
+  | { type: 'key';   scancode: number; pressed: boolean }
   | { type: 'session-end' };

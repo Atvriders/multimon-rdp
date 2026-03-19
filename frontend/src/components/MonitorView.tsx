@@ -1,164 +1,111 @@
-import { useEffect, useRef } from 'react';
-import Guacamole from 'guacamole-common-js';
-import { RDPTunnel, BroadcastTunnel } from '../lib/tunnel';
-import { getChannel, sendMouse, sendKey } from '../lib/channel';
-import type { SessionInfo, ChannelMsg } from '../types';
+import { useEffect, useRef, useState } from 'react';
+import { RdpSocket, codeToScancode } from '../lib/rdpSocket';
+import type { SessionInfo } from '../types';
 
 interface Props {
   session:      SessionInfo;
-  monitorIndex: number;   // which monitor this window shows (0-based)
-  isPrimary:    boolean;  // true → owns the WebSocket connection
+  monitorIndex: number;
+  isPrimary:    boolean;
   onDisconnect: () => void;
 }
 
 export default function MonitorView({ session, monitorIndex, isPrimary, onDisconnect }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef   = useRef<HTMLCanvasElement>(null);
+  const socketRef   = useRef<RdpSocket | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    // ── Build Guacamole client ───────────────────────────────────────────────
-    const tunnel = isPrimary
-      ? new RDPTunnel(window.location.href, session.token)
-      : new BroadcastTunnel();
+    const ctx = canvas.getContext('2d')!;
+    canvas.width  = session.monitorWidth;
+    canvas.height = session.monitorHeight;
 
-    const client = new Guacamole.Client(tunnel);
-    const display = client.getDisplay();
-    const el = display.getElement();
+    const sock = new RdpSocket({
+      sessionId:    session.sessionId,
+      monitorIndex,
+      onBitmap: ({ x, y, width, height, rgba }) => {
+        if (width <= 0 || height <= 0) return;
+        const imgData = new ImageData(rgba, width, height);
+        ctx.putImageData(imgData, x, y);
+      },
+      onReady: ({ monitorWidth, monitorHeight }) => {
+        canvas.width  = monitorWidth;
+        canvas.height = monitorHeight;
+        setReconnecting(false);
+      },
+      onClose:      onDisconnect,
+      onReconnect:  () => setReconnecting(true),
+    });
+    socketRef.current = sock;
 
-    el.style.position = 'absolute';
-    el.style.top      = '0';
-    el.style.transformOrigin = '0 0';
-    container.appendChild(el);
-
-    // ── Scale + offset ───────────────────────────────────────────────────────
-    // For monitor N at monitorWidth W: shift the canvas left by N*W*scale
-    // so only this monitor's slice is visible in the container viewport.
-    const scaleDisplay = () => {
-      const dh = display.getHeight();
-      if (!dh) return;
-      const scale = container.clientHeight / dh;
-      display.scale(scale);
-      el.style.left = `-${monitorIndex * session.monitorWidth * scale}px`;
+    // ── Mouse ─────────────────────────────────────────────────────────────
+    const getPos = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width  / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: Math.round((e.clientX - rect.left) * scaleX),
+        y: Math.round((e.clientY - rect.top)  * scaleY),
+      };
     };
-    display.onresize = scaleDisplay;
-    const ro = new ResizeObserver(scaleDisplay);
-    ro.observe(container);
 
-    // ── Mouse ────────────────────────────────────────────────────────────────
     const onMouse = (e: MouseEvent) => {
       e.preventDefault();
-      const dh = display.getHeight();
-      const s  = dh ? container.clientHeight / dh : 1;
-      const rect = el.getBoundingClientRect();
-      const x = Math.round((e.clientX - rect.left) / s);
-      const y = Math.round((e.clientY - rect.top)  / s);
-      if (isPrimary) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        client.sendMouseState(new (Guacamole.Mouse.State as any)(
-          x, y,
-          (e.buttons & 1) !== 0,
-          (e.buttons & 4) !== 0,
-          (e.buttons & 2) !== 0,
-          false, false,
-        ));
-      } else {
-        sendMouse(x, y, e.buttons, false, false);
-      }
+      const { x, y } = getPos(e);
+      sock.sendMouse(x, y, e.buttons);
     };
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const dh = display.getHeight();
-      const s  = dh ? container.clientHeight / dh : 1;
-      const rect = el.getBoundingClientRect();
-      const x = Math.round((e.clientX - rect.left) / s);
-      const y = Math.round((e.clientY - rect.top)  / s);
-      if (isPrimary) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        client.sendMouseState(new (Guacamole.Mouse.State as any)(
-          x, y, false, false, false, e.deltaY < 0, e.deltaY > 0,
-        ));
-      } else {
-        sendMouse(x, y, 0, e.deltaY < 0, e.deltaY > 0);
-      }
-    };
-    el.addEventListener('mousemove',   onMouse);
-    el.addEventListener('mousedown',   onMouse);
-    el.addEventListener('mouseup',     onMouse);
-    el.addEventListener('contextmenu', (ev: Event) => ev.preventDefault());
-    el.addEventListener('wheel',       onWheel, { passive: false });
-
-    // ── Keyboard ─────────────────────────────────────────────────────────────
-    const keyboard = new Guacamole.Keyboard(document);
-    if (isPrimary) {
-      keyboard.onkeydown = (k: number) => client.sendKeyEvent(1, k);
-      keyboard.onkeyup   = (k: number) => client.sendKeyEvent(0, k);
-    } else {
-      keyboard.onkeydown = (k: number) => sendKey(k, true);
-      keyboard.onkeyup   = (k: number) => sendKey(k, false);
-    }
-
-    // ── Secondary: receive input forwarded from primary's BroadcastChannel ──
-    let chCleanup: (() => void) | undefined;
-    if (isPrimary) {
-      const ch = getChannel();
-      const handler = (e: MessageEvent<ChannelMsg>) => {
-        const msg = e.data;
-        if (msg.type === 'mouse') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          client.sendMouseState(new (Guacamole.Mouse.State as any)(
-            msg.x, msg.y,
-            (msg.buttons & 1) !== 0,
-            (msg.buttons & 4) !== 0,
-            (msg.buttons & 2) !== 0,
-            msg.up, msg.down,
-          ));
-        }
-        if (msg.type === 'key') {
-          client.sendKeyEvent(msg.pressed ? 1 : 0, msg.keysym);
-        }
-      };
-      ch.addEventListener('message', handler);
-      chCleanup = () => ch.removeEventListener('message', handler);
-    } else {
-      // Secondary: feed guac-data into BroadcastTunnel
-      const ch = getChannel();
-      const handler = (e: MessageEvent<ChannelMsg>) => {
-        if (e.data.type === 'guac-data') {
-          (tunnel as BroadcastTunnel).receiveData(e.data.data);
-        }
-        if (e.data.type === 'session-end') {
-          onDisconnect();
-        }
-      };
-      ch.addEventListener('message', handler);
-      chCleanup = () => ch.removeEventListener('message', handler);
-    }
-
-    // ── Connection state ─────────────────────────────────────────────────────
-    client.onerror = () => onDisconnect();
-    client.onstatechange = (state: number) => {
-      if (state === 5) onDisconnect();
+      const { x, y } = getPos(e);
+      sock.sendWheel(x, y, e.deltaY);
     };
 
-    client.connect('');
+    canvas.addEventListener('mousemove',   onMouse);
+    canvas.addEventListener('mousedown',   onMouse);
+    canvas.addEventListener('mouseup',     onMouse);
+    canvas.addEventListener('contextmenu', (e: Event) => e.preventDefault());
+    canvas.addEventListener('wheel',       onWheel, { passive: false });
+
+    // ── Keyboard ──────────────────────────────────────────────────────────
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Don't capture browser shortcuts (F5, Ctrl+W, etc.) that could break the page
+      if (e.key === 'F5') return;
+      e.preventDefault();
+      const sc = codeToScancode(e.code);
+      if (sc) sock.sendKey(sc, true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      const sc = codeToScancode(e.code);
+      if (sc) sock.sendKey(sc, false);
+    };
+
+    canvas.addEventListener('keydown', onKeyDown);
+    canvas.addEventListener('keyup',   onKeyUp);
+    canvas.setAttribute('tabindex', '0');
 
     return () => {
-      chCleanup?.();
-      keyboard.onkeydown = null;
-      keyboard.onkeyup   = null;
-      ro.disconnect();
-      client.disconnect();
-      if (el.parentNode === container) container.removeChild(el);
+      sock.disconnect();
+      socketRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden' }}
-    />
+    <div style={{ position: 'absolute', inset: 0, background: '#000', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {reconnecting && (
+        <div className="waiting" style={{ position: 'absolute', zIndex: 10, background: 'rgba(0,0,0,0.7)' }}>
+          <div className="waiting-spinner" />
+          <div>Reconnecting…</div>
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', cursor: 'none', display: 'block' }}
+        onClick={() => canvasRef.current?.focus()}
+      />
+    </div>
   );
 }
