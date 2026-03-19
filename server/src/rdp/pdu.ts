@@ -333,6 +333,7 @@ export function parseShareCtrl(payload: Buffer): { pduType: number; pduSource: n
 export const PDUTYPE2_UPDATE          = 0x02;
 export const PDUTYPE2_SYNCHRONIZE     = 0x1F;
 export const PDUTYPE2_CONTROL         = 0x14;
+export const PDUTYPE2_FONTLIST        = 0x27;
 export const PDUTYPE2_FONTMAP         = 0x28;
 export const PDUTYPE2_SET_KEYBOARD    = 0x2C;
 
@@ -525,7 +526,7 @@ export function buildFontList(shareId: number, userId: number, ioChannelId: numb
   const data = Buffer.alloc(8);
   data.writeUInt16LE(0, 0); data.writeUInt16LE(0, 2);
   data.writeUInt16LE(3, 4); data.writeUInt16LE(50, 6);
-  const body = shareDataHdr(shareId, PDUTYPE2_FONTMAP, data);
+  const body = shareDataHdr(shareId, PDUTYPE2_FONTLIST, data);
   const sctrl = shareCtrlHdr(PDU_TYPE_DATA, userId, body);
   return mcsSend(userId, ioChannelId, Buffer.concat([secHdr(), sctrl]));
 }
