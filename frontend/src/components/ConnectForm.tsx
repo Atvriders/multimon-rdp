@@ -13,8 +13,8 @@ export default function ConnectForm({ onConnect }: Props) {
   const [password, setPassword] = useState('');
   const [domain,   setDomain]   = useState('');
   const [monitors, setMonitors] = useState(1);
-  const [width,    setWidth]    = useState(1920);
-  const [height,   setHeight]   = useState(1080);
+  const [width,    setWidth]    = useState(() => window.innerWidth);
+  const [height,   setHeight]   = useState(() => window.innerHeight);
   const [ignoreCert, setIgnoreCert] = useState(true);
   const [viewOnly,   setViewOnly]   = useState(false);
 
