@@ -12,6 +12,7 @@ const MSG_BITMAP    = 1;
 const MSG_READY     = 2;
 const MSG_CLOSE     = 3;
 const MSG_RECONNECT = 4;
+const MSG_ERROR     = 5;
 
 export interface BitmapUpdate {
   x:      number;
@@ -66,6 +67,7 @@ export class RdpSocket {
   private onReady:  (info: ReadyInfo) => void;
   private onClose:  () => void;
   private onReconnect: () => void;
+  private onError: (message: string) => void;
 
   constructor(opts: {
     sessionId:    string;
@@ -74,6 +76,7 @@ export class RdpSocket {
     onReady:      (info: ReadyInfo) => void;
     onClose:      () => void;
     onReconnect:  () => void;
+    onError:      (message: string) => void;
   }) {
     this.sessionId    = opts.sessionId;
     this.monitorIndex = opts.monitorIndex;
@@ -81,6 +84,7 @@ export class RdpSocket {
     this.onReady      = opts.onReady;
     this.onClose      = opts.onClose;
     this.onReconnect  = opts.onReconnect;
+    this.onError      = opts.onError;
     this.connect();
   }
 
@@ -112,6 +116,10 @@ export class RdpSocket {
         this.onClose();
       } else if (type === MSG_RECONNECT) {
         this.onReconnect();
+      } else if (type === MSG_ERROR) {
+        const len = buf.getUint16(1, true);
+        const msg = new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer, 3, len));
+        this.onError(msg);
       }
     };
 

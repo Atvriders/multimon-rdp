@@ -186,22 +186,12 @@ export function udCSMonitor(monitorCount: number, monitorWidth: number, monitorH
 // ── GCC Conference Create Request ─────────────────────────────────────────
 
 function gccCCrq(userData: Buffer): Buffer {
-  // T.124 GCC header (fixed prefix from spec)
-  const t124hdr = Buffer.from([0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01]);
-  const conf    = Buffer.from([0x00, 0x08, 0x00, 0x10, 0x00, 0x01, 0xc0, 0x00]);
-  const inner   = Buffer.concat([conf, userData]);
-  // Wrap length as PER aligned: 2 bytes if < 0x4000
-  const lenBuf = Buffer.alloc(2);
-  lenBuf.writeUInt16BE(inner.length + 4, 0);  // +4 for the conf header
-  // Actually the GCC encoding is complex; use the well-known constant framing
-  const gccLen = Buffer.alloc(2);
-  gccLen.writeUInt16BE(((inner.length + 14) << 2) | 0, 0);
-  // Use the standard fixed-format GCC header for RDP
-  const hdr = Buffer.from([
-    0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01,
-  ]);
+  // T.124 GCC header (7 bytes): object key for RDP GCC
+  const hdr  = Buffer.from([0x00, 0x05, 0x00, 0x14, 0x7c, 0x00, 0x01]);
+  // Conference descriptor (8 bytes) — minimal GCC conference name
   const tail = Buffer.from([0x00, 0x08, 0x00, 0x10, 0x00, 0x01, 0xc0, 0x00]);
-  return Buffer.concat([hdr, encodePER14(inner.length + 8), tail, userData]);
+  // PER length = bytes that follow: tail(8) + userData
+  return Buffer.concat([hdr, encodePER14(tail.length + userData.length), tail, userData]);
 }
 
 function encodePER14(n: number): Buffer {
@@ -386,17 +376,28 @@ export function buildClientInfo(username: string, password: string, domain: stri
   fixed.writeUInt16LE(dom.length, 8);
   fixed.writeUInt16LE(usr.length, 10);
   fixed.writeUInt16LE(pwd.length, 12);
-  fixed.writeUInt16LE(sh.length,  14);
-  fixed.writeUInt16LE(wd.length,  16);
+  fixed.writeUInt16LE(0, 14);  // cbAlternateShell = 0 (empty)
+  fixed.writeUInt16LE(0, 16);  // cbWorkingDir = 0 (empty)
 
   const infoBody = Buffer.concat([fixed, dom, Buffer.alloc(2), usr, Buffer.alloc(2), pwd, Buffer.alloc(2), sh, wd]);
 
-  // Extended info
-  const ext = Buffer.alloc(24);
-  ext.writeUInt32LE(0, 0);   // clientAddressFamily (AF_INET)
-  ext.writeUInt16LE(2, 4);   // cbClientAddress
-  ext.writeUInt16LE(0x0030, 6); // clientAddress (short)
-  // rest zeros
+  // Extended Info (TS_EXTENDED_INFO_PACKET)
+  // clientAddress and clientDir are empty UTF-16LE strings (2-byte null each)
+  const clientAddr = Buffer.alloc(2, 0); // UTF-16LE null
+  const clientDir  = Buffer.alloc(2, 0); // UTF-16LE null
+  const timeZone   = Buffer.alloc(172, 0); // TS_TIME_ZONE_INFORMATION (all zeros = UTC)
+  // Total: 2+2+2+2+2+172+4+4+2 = 192 bytes
+  const ext = Buffer.alloc(192, 0);
+  let off = 0;
+  ext.writeUInt16LE(0x0002, off); off += 2; // clientAddressFamily = AF_INET
+  ext.writeUInt16LE(clientAddr.length, off); off += 2; // cbClientAddress
+  clientAddr.copy(ext, off); off += clientAddr.length;
+  ext.writeUInt16LE(clientDir.length, off); off += 2; // cbClientDir
+  clientDir.copy(ext, off); off += clientDir.length;
+  timeZone.copy(ext, off); off += 172;                // clientTimeZone
+  ext.writeUInt32LE(0, off); off += 4;                // clientSessionId
+  ext.writeUInt32LE(0, off); off += 4;                // performanceFlags
+  ext.writeUInt16LE(0, off);                          // cbAutoReconnectCookie
 
   return Buffer.concat([infoBody, ext]);
 }

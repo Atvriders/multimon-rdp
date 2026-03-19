@@ -11,10 +11,11 @@ import * as crypto from 'crypto';
 
 // ── Wire message types (server → browser) ────────────────────────────────
 
-const MSG_BITMAP  = 1;
-const MSG_READY   = 2;
-const MSG_CLOSE   = 3;
+const MSG_BITMAP    = 1;
+const MSG_READY     = 2;
+const MSG_CLOSE     = 3;
 const MSG_RECONNECT = 4;
+const MSG_ERROR     = 5;
 
 function bitmapFrame(monitorIndex: number, tile: BitmapTile): Buffer {
   // [type 1][monitorIdx 2][x 2][y 2][w 2][h 2][rgba N]
@@ -43,6 +44,15 @@ function reconnectFrame(): Buffer {
 
 function closeFrame(): Buffer {
   return Buffer.from([MSG_CLOSE]);
+}
+
+function errorFrame(message: string): Buffer {
+  const msgBuf = Buffer.from(message, 'utf8');
+  const buf = Buffer.alloc(3 + msgBuf.length);
+  buf[0] = MSG_ERROR;
+  buf.writeUInt16LE(msgBuf.length, 1);
+  msgBuf.copy(buf, 3);
+  return buf;
 }
 
 // ── Session ───────────────────────────────────────────────────────────────
@@ -152,6 +162,7 @@ export class RdpSession {
 
     rdp.on('error', (e: Error) => {
       console.error(`[rdp ${this.cfg.host}] Error:`, e.message);
+      if (!this.reconnecting) this.broadcast(errorFrame(e.message));
     });
 
     rdp.on('close', () => {

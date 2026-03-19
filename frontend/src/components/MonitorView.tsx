@@ -12,6 +12,7 @@ export default function MonitorView({ session, monitorIndex, onDisconnect }: Pro
   const canvasRef   = useRef<HTMLCanvasElement>(null);
   const socketRef   = useRef<RdpSocket | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -38,6 +39,7 @@ export default function MonitorView({ session, monitorIndex, onDisconnect }: Pro
       },
       onClose:      onDisconnect,
       onReconnect:  () => setReconnecting(true),
+      onError:      (msg) => setErrorMsg(msg),
     });
     socketRef.current = sock;
 
@@ -100,6 +102,13 @@ export default function MonitorView({ session, monitorIndex, onDisconnect }: Pro
         <div className="waiting" style={{ position: 'absolute', zIndex: 10, background: 'rgba(0,0,0,0.7)' }}>
           <div className="waiting-spinner" />
           <div>Reconnecting…</div>
+        </div>
+      )}
+      {errorMsg && (
+        <div className="waiting" style={{ position: 'absolute', zIndex: 10, background: 'rgba(0,0,0,0.85)' }}>
+          <div style={{ color: '#f66', fontSize: '1.1em', marginBottom: 12 }}>Connection failed</div>
+          <div style={{ color: '#ccc', fontSize: '0.85em', maxWidth: 420, textAlign: 'center' }}>{errorMsg}</div>
+          <button style={{ marginTop: 20, padding: '8px 24px' }} onClick={onDisconnect}>Back</button>
         </div>
       )}
       <canvas
