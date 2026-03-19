@@ -110,6 +110,9 @@ export class RdpClient extends EventEmitter {
 
   private onRawData(chunk: Buffer): void {
     this.recvBuf = Buffer.concat([this.recvBuf, chunk]);
+    if (this.phase >= Phase.MCS_CONNECT && this.phase <= Phase.SYNC_FINALIZE) {
+      console.log(`[rdp ${this.cfg.host}] data phase=${this.phase} bytes=${chunk.length} first=${chunk.slice(0,4).toString('hex')}`);
+    }
     this.drain();
   }
 
@@ -136,10 +139,11 @@ export class RdpClient extends EventEmitter {
             const { len, consumed } = readDerLen(this.recvBuf, 1);
             const total = 1 + consumed + len;
             if (this.recvBuf.length < total) return;
+            console.log(`[rdp ${this.cfg.host}] Skipping ${total}-byte residual TSRequest in phase ${this.phase}`);
             this.recvBuf = Buffer.from(this.recvBuf.slice(total));
             continue;
           }
-          this.onError(`Unexpected byte 0x${this.recvBuf[0].toString(16)} in RDP stream`);
+          this.onError(`Unexpected byte 0x${this.recvBuf[0].toString(16)} in RDP stream (phase ${this.phase})`);
           return;
         }
         if (tpktLen === 0 || this.recvBuf.length < tpktLen) return;
@@ -227,6 +231,7 @@ export class RdpClient extends EventEmitter {
         this.sealingCtx,
       ));
       // Server does NOT respond to authInfo — CredSSP ends, MCS begins immediately
+      console.log(`[rdp ${this.cfg.host}] CredSSP complete, sending MCS Connect-Initial`);
       this.phase = Phase.MCS_CONNECT;
       this.socket!.write(mcsConnectInitial(
         this.cfg.monitorWidth, this.cfg.monitorHeight,
