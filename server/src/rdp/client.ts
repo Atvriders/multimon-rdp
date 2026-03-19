@@ -128,7 +128,21 @@ export class RdpClient extends EventEmitter {
       } else {
         if (this.recvBuf.length < 4) return;
         const tpktLen = parseTpktLen(this.recvBuf);
-        if (tpktLen <= 0 || this.recvBuf.length < tpktLen) return;
+        if (tpktLen === -1) {
+          // Not a TPKT — may be a residual TSRequest the server sent after authInfo.
+          // Skip the ASN.1 SEQUENCE frame and keep going.
+          if (this.recvBuf[0] === 0x30) {
+            if (this.recvBuf.length < 2) return;
+            const { len, consumed } = readDerLen(this.recvBuf, 1);
+            const total = 1 + consumed + len;
+            if (this.recvBuf.length < total) return;
+            this.recvBuf = Buffer.from(this.recvBuf.slice(total));
+            continue;
+          }
+          this.onError(`Unexpected byte 0x${this.recvBuf[0].toString(16)} in RDP stream`);
+          return;
+        }
+        if (tpktLen === 0 || this.recvBuf.length < tpktLen) return;
         const frame = Buffer.from(this.recvBuf.slice(0, tpktLen));
         this.recvBuf = Buffer.from(this.recvBuf.slice(tpktLen));
         this.handleTpkt(frame);
@@ -227,6 +241,7 @@ export class RdpClient extends EventEmitter {
   // ── MCS connection ──────────────────────────────────────────────────────
 
   private onMcsResponse(frame: Buffer): void {
+    console.log(`[rdp ${this.cfg.host}] MCS Connect-Response received`);
     const { ioChannelId } = parseMcsConnectResponse(stripX224(frame));
     this.ioChannelId = ioChannelId;
     this.phase = Phase.MCS_ERECT;
@@ -240,6 +255,7 @@ export class RdpClient extends EventEmitter {
     const uid = parseMcsAttachUserConfirm(p);
     if (!uid) return;
     this.userId = uid;
+    console.log(`[rdp ${this.cfg.host}] AttachUser userId=${uid}, joining channels`);
     this.phase = Phase.CHANNEL_JOIN;
     this.channelsToJoin = [this.userId, this.ioChannelId];
     this.channelsJoined = 0;
@@ -252,6 +268,7 @@ export class RdpClient extends EventEmitter {
     if (this.channelsJoined < this.channelsToJoin.length) {
       this.socket!.write(mcsChannelJoin(this.userId, this.channelsToJoin[this.channelsJoined]));
     } else {
+      console.log(`[rdp ${this.cfg.host}] Channels joined, sending ClientInfo`);
       this.phase = Phase.CLIENT_INFO;
       // Client Info PDU: security header (SEC_INFO_PKT=0x0040) + TS_INFO_PACKET
       const infoPacket = buildClientInfo(this.cfg.username, this.cfg.password, this.cfg.domain);
@@ -264,7 +281,10 @@ export class RdpClient extends EventEmitter {
 
   private onCapabilities(frame: Buffer): void {
     const mcs = parseMcsSend(frame);
-    if (!mcs) return;
+    if (!mcs) {
+      console.log(`[rdp ${this.cfg.host}] Non-MCS frame in capabilities phase (first byte: 0x${frame[0].toString(16)})`);
+      return;
+    }
     let payload = mcs.payload;
     // Skip security header (4 bytes) if present
     if (payload.length > 4) payload = payload.slice(4);
