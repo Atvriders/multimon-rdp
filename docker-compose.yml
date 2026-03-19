@@ -1,0 +1,31 @@
+services:
+  guacd:
+    image: ghcr.io/atvriders/multimon-rdp/guacd:latest
+    restart: unless-stopped
+    environment:
+      NUM_MONITORS: "3"
+      MON_W: "1920"
+      MON_H: "1080"
+    networks:
+      - internal
+
+  server:
+    image: ghcr.io/atvriders/multimon-rdp/server:latest
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      GUACD_HOST: guacd
+      GUACD_PORT: "4822"
+    networks:
+      - internal
+
+  frontend:
+    image: ghcr.io/atvriders/multimon-rdp/frontend:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    networks:
+      - internal
+
+networks:
+  internal:
