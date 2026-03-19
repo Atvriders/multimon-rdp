@@ -8,7 +8,10 @@ import * as tls  from 'tls';
 import { EventEmitter } from 'events';
 
 import { buildNegotiate, parseChallenge, buildAuthenticate } from './ntlm';
-import { buildTsRequestToken, buildTsRequestAuth, parseTsRequest, computePubKeyAuth } from './credssp';
+import {
+  buildTsRequestToken, buildTsRequestAuth, buildTsRequestAuthInfo,
+  parseTsRequest, computePubKeyAuth, SealingContext,
+} from './credssp';
 import {
   x224ConnectReq, parseX224CC, PROTO_HYBRID,
   mcsConnectInitial, parseMcsConnectResponse,
@@ -42,7 +45,7 @@ export interface RdpConfig {
 }
 
 const enum Phase {
-  TCP_CONNECT, X224, NLA_NEGOTIATE, NLA_AUTHENTICATE, MCS_CONNECT,
+  TCP_CONNECT, X224, NLA_NEGOTIATE, NLA_AUTHENTICATE, NLA_CREDENTIALS, MCS_CONNECT,
   MCS_ERECT, MCS_ATTACH, CHANNEL_JOIN, CLIENT_INFO, CAPABILITIES,
   SYNC_FINALIZE, ACTIVE, CLOSED,
 }
@@ -59,9 +62,9 @@ export class RdpClient extends EventEmitter {
   private channelsToJoin: number[] = [];
   private channelsJoined = 0;
 
-  // typed as unknown[] so Buffer return types don't conflict across TS versions
-  private negotiateMsg: Uint8Array = Buffer.alloc(0);
-  private challengeMsg: Uint8Array = Buffer.alloc(0);
+  private negotiateMsg:   Uint8Array    = Buffer.alloc(0);
+  private challengeMsg:   Uint8Array    = Buffer.alloc(0);
+  private sealingCtx:     SealingContext | null = null;
 
   constructor(private cfg: RdpConfig) { super(); }
 
@@ -113,7 +116,7 @@ export class RdpClient extends EventEmitter {
   private drain(): void {
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      if (this.phase === Phase.NLA_NEGOTIATE || this.phase === Phase.NLA_AUTHENTICATE) {
+      if (this.phase === Phase.NLA_NEGOTIATE || this.phase === Phase.NLA_AUTHENTICATE || this.phase === Phase.NLA_CREDENTIALS) {
         if (this.recvBuf.length < 2) return;
         if (this.recvBuf[0] !== 0x30) { this.onError('Expected ASN.1 SEQUENCE'); return; }
         const { len, consumed } = readDerLen(this.recvBuf, 1);
@@ -184,6 +187,7 @@ export class RdpClient extends EventEmitter {
     const resp = parseTsRequest(frame);
 
     if (this.phase === Phase.NLA_NEGOTIATE) {
+      // Step 2: received NTLM Challenge → send NTLM Authenticate + pubKeyAuth (step 3)
       if (!resp.negoToken) { this.onError('No NTLM challenge in TSRequest'); return; }
       this.challengeMsg = resp.negoToken;
       const ch = parseChallenge(Buffer.from(this.challengeMsg));
@@ -191,17 +195,32 @@ export class RdpClient extends EventEmitter {
         this.cfg.username, this.cfg.password, this.cfg.domain,
         ch, Buffer.from(this.negotiateMsg), Buffer.from(this.challengeMsg),
       );
-      const pubKeyAuth = computePubKeyAuth(this.socket!, exportedSession);
+      this.sealingCtx = new SealingContext(exportedSession);
+      const pubKeyAuth = computePubKeyAuth(this.socket!, this.sealingCtx);
       this.phase = Phase.NLA_AUTHENTICATE;
       this.socket!.write(buildTsRequestAuth(authMsg, pubKeyAuth));
 
     } else if (this.phase === Phase.NLA_AUTHENTICATE) {
-      // Auth accepted — proceed to MCS
+      // Step 4: received server's pubKeyAuth proof
+      if (resp.errorCode) {
+        this.onError(`CredSSP auth rejected by server (errorCode 0x${resp.errorCode.toString(16)})`);
+        return;
+      }
+      // Step 5: send encrypted credentials (authInfo)
+      if (!this.sealingCtx) { this.onError('No sealing context for authInfo'); return; }
+      this.socket!.write(buildTsRequestAuthInfo(
+        this.cfg.username, this.cfg.password, this.cfg.domain,
+        this.sealingCtx,
+      ));
+      // Server does NOT respond to authInfo — CredSSP ends, MCS begins immediately
       this.phase = Phase.MCS_CONNECT;
       this.socket!.write(mcsConnectInitial(
         this.cfg.monitorWidth, this.cfg.monitorHeight,
         this.cfg.monitorCount, this.cfg.monitorWidth, this.cfg.monitorHeight,
       ));
+
+    } else if (this.phase === Phase.NLA_CREDENTIALS) {
+      // Should not happen; ignore
     }
   }
 

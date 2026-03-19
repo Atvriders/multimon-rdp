@@ -4,6 +4,7 @@
  */
 import * as crypto from 'crypto';
 import { md4 } from './md4';
+import { RC4 } from './rc4';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -102,16 +103,8 @@ export function buildAuthenticate(
   // Session key derivation
   const sessionBaseKey     = hmacMD5(ntv2H, NTProofStr);
   const exportedSessionKey = crypto.randomBytes(16);
-  // RC4 encrypt: key exchange key = sessionBaseKey (no KeyExchangeKey derivation needed at our SEAL level)
-  let encSessionKey: Buffer;
-  try {
-    const rc4 = crypto.createCipheriv('rc4', sessionBaseKey, Buffer.alloc(0));
-    encSessionKey = rc4.update(exportedSessionKey);
-  } catch {
-    // RC4 not available — use XOR fallback (sign-only, no encryption in this path)
-    encSessionKey = Buffer.from(exportedSessionKey);
-    for (let i = 0; i < 16; i++) encSessionKey[i] ^= sessionBaseKey[i];
-  }
+  // RC4 encrypt the exported session key (pure-JS to avoid OpenSSL 3 legacy issues)
+  const encSessionKey = new RC4(sessionBaseKey).update(exportedSessionKey);
 
   const domainBuf   = Buffer.from(domain,   'utf16le');
   const userBuf     = Buffer.from(username, 'utf16le');
