@@ -97,7 +97,6 @@ export class RdpSocket {
       const type = buf.getUint8(0);
 
       if (type === MSG_BITMAP) {
-        const monIdx  = buf.getUint16(1, true);
         const x       = buf.getUint16(3, true);
         const y       = buf.getUint16(5, true);
         const width   = buf.getUint16(7, true);

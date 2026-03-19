@@ -112,7 +112,6 @@ export default function App() {
         <MonitorView
           session={session}
           monitorIndex={monitorIndex}
-          isPrimary={isPrimary}
           onDisconnect={handleDisconnect}
         />
         {isPrimary && (

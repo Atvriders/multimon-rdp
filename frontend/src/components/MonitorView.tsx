@@ -5,11 +5,10 @@ import type { SessionInfo } from '../types';
 interface Props {
   session:      SessionInfo;
   monitorIndex: number;
-  isPrimary:    boolean;
   onDisconnect: () => void;
 }
 
-export default function MonitorView({ session, monitorIndex, isPrimary, onDisconnect }: Props) {
+export default function MonitorView({ session, monitorIndex, onDisconnect }: Props) {
   const canvasRef   = useRef<HTMLCanvasElement>(null);
   const socketRef   = useRef<RdpSocket | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
@@ -27,7 +26,9 @@ export default function MonitorView({ session, monitorIndex, isPrimary, onDiscon
       monitorIndex,
       onBitmap: ({ x, y, width, height, rgba }) => {
         if (width <= 0 || height <= 0) return;
-        const imgData = new ImageData(rgba, width, height);
+        // Ensure contiguous Uint8ClampedArray (no offset into shared ArrayBuffer)
+        const pixels = new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength);
+        const imgData = new ImageData(new Uint8ClampedArray(pixels), width, height);
         ctx.putImageData(imgData, x, y);
       },
       onReady: ({ monitorWidth, monitorHeight }) => {
